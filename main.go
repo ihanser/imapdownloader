@@ -36,6 +36,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("转换配置文件出错:%s\n", err.Error())
 	}
+	// 设置默认值
+	if opts.Parallel < 1 {
+		opts.Parallel = 4
+	}
+	if opts.Threads < 1 {
+		opts.Threads = opts.Parallel // 默认等于 parallel
+	}
 	opts.setAbsDir()
 	opts.print()
 	ctx := context.Background()
