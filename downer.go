@@ -14,11 +14,15 @@ import (
 	"github.com/emersion/go-imap"
 	"github.com/emersion/go-imap/client"
 	"github.com/emersion/go-message/charset"
+
+	"database/sql"
+	_ "modernc.org/sqlite"
 )
 
 type Downloader struct {
 	Client  *client.Client
 	Options *Options
+	DB      *sql.DB
 }
 
 func NewDownloader(opts *Options) (d *Downloader, err error) {
@@ -37,8 +41,73 @@ func NewDownloader(opts *Options) (d *Downloader, err error) {
 	}
 	log.Info("已登录:", d.Options.Username)
 
+	// 打开 SQLite 数据库，跟踪已下载邮件
+	dbPath := filepath.Join(d.Options.absDir, ".imap_downloaded.db")
+	d.DB, err = sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("打开数据库失败: %w", err)
+	}
+
+	_, err = d.DB.Exec(`
+		CREATE TABLE IF NOT EXISTS downloaded_uids (
+			uid INTEGER NOT NULL,
+			mailbox TEXT NOT NULL,
+			downloaded_at TEXT NOT NULL DEFAULT (datetime('now')),
+			file_path TEXT,
+			PRIMARY KEY (uid, mailbox)
+		)
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("初始化数据库失败: %w", err)
+	}
+
+	// 统计已记录数
+	var count int
+	d.DB.QueryRow("SELECT COUNT(*) FROM downloaded_uids").Scan(&count)
+	log.Infof("已下载记录数据库: %s (%d 条记录)", dbPath, count)
+
 	log.Info("✅ 连接成功")
 	return
+}
+
+// isUIDDownloaded 检查某个 UID+mailbox 是否已下载
+func (d *Downloader) isUIDDownloaded(uid uint32, mailbox string) (bool, error) {
+	var count int
+	err := d.DB.QueryRow("SELECT COUNT(*) FROM downloaded_uids WHERE uid=? AND mailbox=?", uid, mailbox).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// markUIDDownloaded 记录已下载的 UID
+func (d *Downloader) markUIDDownloaded(uid uint32, mailbox, filePath string) error {
+	_, err := d.DB.Exec("INSERT OR IGNORE INTO downloaded_uids (uid, mailbox, file_path) VALUES (?, ?, ?)",
+		uid, mailbox, filePath)
+	return err
+}
+
+// markUIDsDownloaded 批量记录已下载的 UID
+func (d *Downloader) markUIDsDownloaded(uids []uint32, mailbox string) error {
+	tx, err := d.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare("INSERT OR IGNORE INTO downloaded_uids (uid, mailbox) VALUES (?, ?)")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, uid := range uids {
+		_, err = stmt.Exec(uid, mailbox)
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (d *Downloader) downloadAccountMailbox(ctx context.Context, mailbox string) (err error) {
@@ -51,7 +120,6 @@ func (d *Downloader) downloadAccountMailbox(ctx context.Context, mailbox string)
 	// 获取邮件总数
 	status, err := d.Client.Status(mailbox, []imap.StatusItem{imap.StatusMessages})
 	if err != nil {
-		// 如果 Status 不支持，尝试 Select 获取总数
 		status2, err2 := d.Client.Select(mailbox, true)
 		if err2 != nil {
 			return err
@@ -159,9 +227,12 @@ func (d *Downloader) getNewUIDs(ctx context.Context, start, end uint32, mailbox 
 			if msg == nil {
 				continue
 			}
-			storePath := d.getMailStorePath(msg, mailbox)
-			exists, _ := PathExists(storePath)
-			if exists {
+			// 先查数据库，跳过已下载的
+			downloaded, err := d.isUIDDownloaded(msg.Uid, mailbox)
+			if err != nil {
+				log.Warnf("查询数据库失败 (UID=%d): %s", msg.Uid, err)
+			}
+			if downloaded {
 				continue
 			}
 			uids = append(uids, msg.Uid)
@@ -222,10 +293,6 @@ func (d *Downloader) downloadByUIDs(ctx context.Context, uids []uint32, mailbox 
 
 func (d *Downloader) saveMail(ctx context.Context, msg *imap.Message, mailbox string) (err error) {
 	storePath := d.getMailStorePath(msg, mailbox)
-	exists, _ := PathExists(storePath)
-	if exists {
-		return
-	}
 	dir := filepath.Dir(storePath)
 	err = os.MkdirAll(dir, 0755)
 	if err != nil {
@@ -236,6 +303,10 @@ func (d *Downloader) saveMail(ctx context.Context, msg *imap.Message, mailbox st
 		if body, err := io.ReadAll(literal); err == nil && len(body) > 0 {
 			if err = os.WriteFile(storePath, body, 0644); err != nil {
 				return err
+			}
+			// 写入成功后再记录数据库
+			if err := d.markUIDDownloaded(msg.Uid, mailbox, storePath); err != nil {
+				log.Warnf("记录数据库失败 (UID=%d): %s", msg.Uid, err)
 			}
 			log.Debugf("已保存: %s", storePath)
 			return nil
