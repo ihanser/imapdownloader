@@ -1,0 +1,25 @@
+# IMAP 邮件下载器配置文件（优化版）
+# 将下载到 backup/ 目录，按 年/月/ 组织
+
+# 存储目录（相对于程序所在目录）
+dir: backup
+
+# IMAP 服务器地址（必须 TLS 加密）
+host: imap.qq.com:993
+
+# 登录凭据
+username: your_email@qq.com
+password: your_password
+
+# 要下载的邮箱文件夹前缀（匹配所有以此开头的文件夹）
+prefixes:
+  - 收件箱
+  - 已发送
+  - 存档
+  - INBOX
+
+# ★ 并行下载连接数（新增！建议 3-6）
+# 每个连接单独下载一个文件夹，同时进行
+# 设 0 或 1 = 串行（原始行为）
+# IMAP 服务器一般允许 10-15 个并发连接，建议设 3-6
+parallel: 4
