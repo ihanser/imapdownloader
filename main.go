@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"os"
 	"sync"
 
@@ -11,14 +12,21 @@ import (
 )
 
 func init() {
-	log.SetOutput(os.Stdout)
-	file, err := os.OpenFile("logrus.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if err == nil {
-		log.SetOutput(file)
-	} else {
-		log.Info("Failed to log to file, using default stderr")
-	}
+	// 同时输出到控制台和文件
 	log.SetLevel(log.InfoLevel)
+	log.SetOutput(io.Discard) // 先禁用默认输出
+
+	// 文件日志
+	file, err := os.OpenFile("logrus.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		log.SetOutput(os.Stdout)
+		log.Info("日志文件打开失败，仅输出到控制台")
+		return
+	}
+
+	// 同时写入文件和标准输出
+	mw := io.MultiWriter(os.Stdout, file)
+	log.SetOutput(mw)
 }
 
 func main() {
@@ -105,6 +113,9 @@ func DownloadByAccount(ctx context.Context, opts *Options) (err error) {
 						log.Errorf("[Worker %d] 下载文件夹 %s 失败: %s", workerId, j.mailbox, subErr)
 						errCh <- subErr
 					}
+
+					log.Infof("[Worker %d] %s 统计: 跳过 %d 封，新增下载 %d 封",
+						workerId, j.mailbox, subD.Skipped, subD.Downloaded)
 				}()
 				log.Infof("[Worker %d] 完成文件夹: %s", workerId, j.mailbox)
 			}
@@ -120,5 +131,6 @@ func DownloadByAccount(ctx context.Context, opts *Options) (err error) {
 		}
 	}
 
+	log.Infof("===== 全部处理完成 =====")
 	return
 }
