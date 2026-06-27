@@ -1,0 +1,4 @@
+imapdownloader
+imapdownloader_linux_*
+*.log
+backup/
