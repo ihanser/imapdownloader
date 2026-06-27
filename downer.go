@@ -227,12 +227,21 @@ func (d *Downloader) getNewUIDs(ctx context.Context, start, end uint32, mailbox 
 			if msg == nil {
 				continue
 			}
-			// 先查数据库，跳过已下载的
+			// 双重跳过检查：数据库 + 文件存在性
 			downloaded, err := d.isUIDDownloaded(msg.Uid, mailbox)
 			if err != nil {
 				log.Warnf("查询数据库失败 (UID=%d): %s", msg.Uid, err)
 			}
 			if downloaded {
+				continue
+			}
+			// 文件路径检查（兼容旧版本已下载的文件）
+			storePath := d.getMailStorePath(msg, mailbox)
+			if exists, _ := PathExists(storePath); exists {
+				// 文件已存在但 DB 无记录，自动回填 DB
+				if err := d.markUIDDownloaded(msg.Uid, mailbox, storePath); err != nil {
+					log.Warnf("记录数据库失败 (UID=%d): %s", msg.Uid, err)
+				}
 				continue
 			}
 			uids = append(uids, msg.Uid)
