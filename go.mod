@@ -4,7 +4,6 @@ go 1.19
 
 require (
 	github.com/emersion/go-imap v1.2.1
-	github.com/emersion/go-imap-compress v0.1.0
 	github.com/emersion/go-message v0.18.1
 	github.com/sirupsen/logrus v1.9.3
 	gopkg.in/yaml.v3 v3.0.1
