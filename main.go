@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"github.com/emersion/go-imap/client"
 	log "github.com/sirupsen/logrus"
@@ -12,11 +13,9 @@ import (
 )
 
 func init() {
-	// 同时输出到控制台和文件
 	log.SetLevel(log.InfoLevel)
-	log.SetOutput(io.Discard) // 先禁用默认输出
+	log.SetOutput(io.Discard)
 
-	// 文件日志
 	file, err := os.OpenFile("logrus.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
 		log.SetOutput(os.Stdout)
@@ -24,7 +23,6 @@ func init() {
 		return
 	}
 
-	// 同时写入文件和标准输出
 	mw := io.MultiWriter(os.Stdout, file)
 	log.SetOutput(mw)
 }
@@ -47,22 +45,23 @@ func main() {
 	}
 }
 
-// DownloadByAccount 按邮箱账户进行下载（并行加速版）
+// DownloadByAccount 并行下载
 func DownloadByAccount(ctx context.Context, opts *Options) (err error) {
-	// 主连接只用来列举文件夹
 	d, err := NewDownloader(opts)
 	if err != nil {
 		return
 	}
-	defer func(Client *client.Client) {
-		_ = Client.Logout()
-	}(d.Client)
+	defer func() {
+		if d.DB != nil {
+			d.DB.Close()
+		}
+		_ = d.Client.Logout()
+	}()
 
 	mailboxes, err := d.getPrefixMatchedMailBoxes(ctx)
 	if err != nil {
 		return
 	}
-
 	if len(mailboxes) == 0 {
 		log.Warn("没有匹配的邮箱文件夹")
 		return nil
@@ -89,6 +88,9 @@ func DownloadByAccount(ctx context.Context, opts *Options) (err error) {
 
 	var wg sync.WaitGroup
 	errCh := make(chan error, len(mailboxes))
+	mu := &sync.Mutex{}
+	totalSkipped := uint64(0)
+	totalDownloaded := uint64(0)
 
 	for w := 0; w < numWorkers; w++ {
 		wg.Add(1)
@@ -97,7 +99,6 @@ func DownloadByAccount(ctx context.Context, opts *Options) (err error) {
 			for j := range jobs {
 				log.Infof("[Worker %d] 开始下载文件夹: %s", workerId, j.mailbox)
 
-				// 每个文件夹创建独立连接（IMAP 协议要求一个连接只能 SELECT 一个文件夹）
 				subD, subErr := NewDownloader(opts)
 				if subErr != nil {
 					log.Errorf("[Worker %d] 创建连接失败: %s", workerId, subErr)
@@ -105,17 +106,27 @@ func DownloadByAccount(ctx context.Context, opts *Options) (err error) {
 					continue
 				}
 				func() {
-					defer func(Client *client.Client) {
-						_ = Client.Logout()
-					}(subD.Client)
+					defer func() {
+						if subD.DB != nil {
+							subD.DB.Close()
+						}
+						_ = subD.Client.Logout()
+					}()
 
 					if subErr = subD.downloadAccountMailbox(ctx, j.mailbox); subErr != nil {
 						log.Errorf("[Worker %d] 下载文件夹 %s 失败: %s", workerId, j.mailbox, subErr)
 						errCh <- subErr
 					}
 
-					log.Infof("[Worker %d] %s 统计: 跳过 %d 封，新增下载 %d 封",
-						workerId, j.mailbox, subD.Skipped, subD.Downloaded)
+					skipped := atomic.LoadUint64(&subD.Skipped)
+					downloaded := atomic.LoadUint64(&subD.Downloaded)
+					mu.Lock()
+					totalSkipped += skipped
+					totalDownloaded += downloaded
+					mu.Unlock()
+
+					log.Infof("[Worker %d] %s 统计: 跳过 %d 封，下载 %d 封",
+						workerId, j.mailbox, skipped, downloaded)
 				}()
 				log.Infof("[Worker %d] 完成文件夹: %s", workerId, j.mailbox)
 			}
@@ -131,6 +142,6 @@ func DownloadByAccount(ctx context.Context, opts *Options) (err error) {
 		}
 	}
 
-	log.Infof("===== 全部处理完成 =====")
+	log.Infof("===== 全部完成：总跳过 %d 封，总下载 %d 封 =====", totalSkipped, totalDownloaded)
 	return
 }
