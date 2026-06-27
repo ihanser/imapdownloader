@@ -284,7 +284,7 @@ func (d *Downloader) downloadByUIDsWithConn(ctx context.Context, subD *Downloade
 				continue
 			}
 
-			// 复用 saveMail（写文件 + 记录 DB）
+			storePath := d.getMailStorePath(msg, mailbox)
 			if err := d.saveMailWithPath(msg, mailbox, info, storePath); err != nil {
 				log.Errorf("❌ 保存邮件失败: %s", err)
 				continue
