@@ -7,7 +7,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/emersion/go-imap/client"
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v3"
 )
