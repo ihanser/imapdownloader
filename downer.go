@@ -371,15 +371,32 @@ func (d *Downloader) saveMail(ctx context.Context, msg *imap.Message, mailbox st
 }
 
 func (d *Downloader) getMailStorePath(msg *imap.Message, mailbox string) string {
+	subject := "无主题"
+	msgID := ""
+	if msg.Envelope != nil {
+		if msg.Envelope.Subject != "" {
+			subject = msg.Envelope.Subject
+		}
+		msgID = msg.Envelope.MessageId
+	}
+
+	// 用 Message-ID 做文件名（全局唯一，跨文件夹一致）
+	// 无 Message-ID 时回退到时间戳
+	var fileName string
+	if msgID != "" {
+		// 取 Message-ID 前 32 位哈希，避免文件名过长
+		h := sha256.Sum256([]byte(msgID))
+		idPart := fmt.Sprintf("%x", h[:16])
+		fileName = fmt.Sprintf("%s-%s.eml", subject, idPart)
+	} else {
+		t := msg.InternalDate
+		fileName = fmt.Sprintf("%s-%d.eml", subject, t.UnixMilli())
+	}
+	fileName = sanitizeFileName(fileName)
+
 	t := msg.InternalDate
 	year := t.Format("2006")
 	month := t.Format("01")
-	subject := "无主题"
-	if msg.Envelope != nil && msg.Envelope.Subject != "" {
-		subject = msg.Envelope.Subject
-	}
-	fileName := fmt.Sprintf("%s-%d.eml", subject, t.UnixMilli())
-	fileName = sanitizeFileName(fileName)
 	dir := filepath.Join(d.Options.absDir, mailbox, year, month)
 	return filepath.Join(dir, fileName)
 }
