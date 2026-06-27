@@ -151,7 +151,7 @@ func (d *Downloader) downloadAccountMailbox(ctx context.Context, mailbox string)
 
 	// Phase 2：并行下载正文
 	if len(allInfos) > 0 {
-		log.Infof("🔄 第2阶段：并行下载 %d 封邮件（%d 线程）...", len(allInfos), d.Options.Parallel)
+		log.Infof("🔄 第2阶段：并行下载 %d 封邮件（%d 线程）...", len(allInfos), d.Options.Threads)
 		err = d.downloadAllParallel(ctx, allInfos, mailbox)
 	} else {
 		log.Infof("✅ 无新增邮件")
@@ -167,7 +167,7 @@ func (d *Downloader) downloadAccountMailbox(ctx context.Context, mailbox string)
 
 // downloadAllParallel 将待下载 UID 平均分块，每块一个 goroutine 并行下载
 func (d *Downloader) downloadAllParallel(ctx context.Context, allInfos []uidInfo, mailbox string) error {
-	numWorkers := d.Options.Parallel
+	numWorkers := d.Options.Threads
 	if numWorkers < 1 {
 		numWorkers = 1
 	}
