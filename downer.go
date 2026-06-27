@@ -267,7 +267,7 @@ func (d *Downloader) scanUIDs(ctx context.Context, start, end uint32, mailbox st
 
 			// 检查 3: 如果没有 Message-ID，用 subject+日期 哈希做降级去重
 			if msgID == "" {
-				fk := fallbackKey(subject, msg.Envelope.Date)
+				fk := fallbackKey(subject, msg.Envelope.Date.Format(time.RFC3339))
 				if d.isMsgIDDownloaded(fk) {
 					skipped++
 					continue
