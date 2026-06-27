@@ -1,0 +1,46 @@
+name: 编译 imapdownloader（RPi5 优化版）
+
+on:
+  workflow_dispatch:  # 手动触发
+  push:
+    branches: [ main ]
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # RPi5 = arm64；如果也需要 32 位系统可加 armv7
+        arch: [arm64]
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: 下载依赖
+        run: go mod tidy
+
+      - name: 编译（arm64）
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.arch == 'arm64' && 'arm64' || 'arm' }}
+        run: |
+          go build -ldflags="-s -w" -o imapdownloader_linux_${{ matrix.arch }} .
+
+      - name: 上传编译产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: imapdownloader_linux_${{ matrix.arch }}
+          path: imapdownloader_linux_${{ matrix.arch }}
+          compression-level: 0  # 本身就是压缩过的二进制
+          if-no-files-found: error
